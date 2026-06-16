@@ -1,0 +1,103 @@
+# PC Rotation Manager Pro — How to Run
+
+## Quick Start
+
+### Option 1: Silent Launch (Recommended)
+Double-click: **`run_silent.vbs`** or **`run.bat`**
+- No console window will appear
+- Application starts minimally intrusive
+
+### Option 2: Debug Mode
+Double-click: **`run_debug.bat`**
+- Shows console window for debugging
+- Displays error messages and logs
+- Press ENTER when finished to close
+
+## First Setup
+
+1. **Launch the app** (use run.bat or run_silent.vbs)
+2. **Click "🔧 Admin Panel"** button in the main window
+3. Go to **"Secret Codes"** tab
+4. Enter Player 1 and Player 2 secret codes
+5. Click **"Save Secret Codes"**
+
+After initial setup:
+- Every time you open Admin Panel, it will require both secret codes for security
+- The codes are stored encrypted in: `C:\ProgramData\PCRotationManager\secrets.json`
+
+## Mobile Dashboard Connection
+
+### Problem: "Cannot connect to 192.168.10.219:8765"
+
+This means the default IP address doesn't match your network. Fix it:
+
+#### Quick Fix (Automatic):
+1. Double-click: **`fix_ip.ps1`** (PowerShell script)
+2. It will find your actual IP and update config automatically
+3. Restart the app
+4. Mobile dashboard will now be accessible
+
+#### Manual Fix:
+1. Find your PC's local IP:
+   - Windows: Open Command Prompt and run: `ipconfig`
+   - Look for "IPv4 Address" (usually 192.168.x.x or 10.x.x.x)
+   
+2. Edit the config file:
+   - Navigate to: `C:\ProgramData\PCRotationManager\config.json`
+   - Change `"advertised_ip": "192.168.10.219"` to your actual IP
+   - Save the file
+
+3. Restart PC Rotation Manager
+
+4. Try accessing: `http://YOUR_IP:8765/`
+
+## Automatic Startup
+
+Run once: **`install_startup.ps1`** (in PowerShell as the user)
+
+This will create a startup shortcut that launches PC Rotation Manager Pro silently on every login.
+
+## What Files Do
+
+| File | Purpose |
+|------|---------|
+| `run.bat` | Launches app without console (default) |
+| `run_debug.bat` | Launches app with console (for troubleshooting) |
+| `run_silent.vbs` | Alternative silent launcher |
+| `fix_ip.ps1` | Find and update network IP automatically |
+| `fix_ip.bat` | Alternative batch version |
+| `install_startup.ps1` | Adds app to Windows startup |
+
+## Data Location
+
+All shared data is stored in:
+```
+C:\ProgramData\PCRotationManager\
+```
+
+Files:
+- `state.json` — Game state, timers, tokens
+- `secrets.json` — Encoded secret codes (admin protection)
+- `config.json` — Network settings
+- `actions.log` — Action history
+
+All users on the PC share the same files.
+
+## Troubleshooting
+
+### App won't start:
+1. Open **`run_debug.bat`** to see error messages
+2. Check that Python 3.11+ is installed
+3. Run: `pip install -r requirements.txt`
+4. Try again
+
+### Console window appears when using run.bat:
+- Make sure you're using `run.bat` (not run_debug.bat)
+- Use `run_silent.vbs` instead
+- Right-click `run_silent.vbs` and select "Open with" → "Microsoft Windows Based Script Host"
+
+### Mobile dashboard won't load:
+1. Run `fix_ip.ps1` to update your IP automatically
+2. Or manually update `C:\ProgramData\PCRotationManager\config.json`
+3. Restart the app
+4. Try the new IP address in Firefox/Chrome

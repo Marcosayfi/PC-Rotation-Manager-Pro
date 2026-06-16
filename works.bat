@@ -1,0 +1,1 @@
+".venv\Scripts\python.exe" main.py 2>&1
