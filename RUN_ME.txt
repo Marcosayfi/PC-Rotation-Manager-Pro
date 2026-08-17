@@ -23,11 +23,11 @@ Double-click: **`run_debug.bat`**
 
 After initial setup:
 - Every time you open Admin Panel, it will require both secret codes for security
-- The codes are stored encrypted in: `C:\ProgramData\PCRotationManager\secrets.json`
+- The codes are stored encrypted in `%LOCALAPPDATA%\PCRotationManagerPro\secrets.json` (or the app's shared data dir).
 
 ## Mobile Dashboard Connection
 
-### Problem: "Cannot connect to 192.168.10.219:8765"
+### Problem: "Cannot connect to <YOUR_IP>:8765"
 
 This means the default IP address doesn't match your network. Fix it:
 
@@ -43,8 +43,8 @@ This means the default IP address doesn't match your network. Fix it:
    - Look for "IPv4 Address" (usually 192.168.x.x or 10.x.x.x)
    
 2. Edit the config file:
-   - Navigate to: `C:\ProgramData\PCRotationManager\config.json`
-   - Change `"advertised_ip": "192.168.10.219"` to your actual IP
+   - Navigate to: `C:\PCRotationManagerPro\config.json`
+   - Change `"advertised_ip": "<YOUR_IP>"` to your actual IP
    - Save the file
 
 3. Restart PC Rotation Manager
@@ -72,7 +72,7 @@ This will create a startup shortcut that launches PC Rotation Manager Pro silent
 
 All shared data is stored in:
 ```
-C:\ProgramData\PCRotationManager\
+C:\PCRotationManagerPro\
 ```
 
 Files:

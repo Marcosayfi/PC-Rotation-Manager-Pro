@@ -133,9 +133,10 @@
 
   <script>
     let lastStatus = null;
+    let lastStatusReceivedAt = 0;
 
     function fmt(minutes) {
-      const sec = Math.max(0, Math.floor(minutes * 60));
+      const sec = Math.max(0, Math.ceil(minutes * 60));
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       const s = sec % 60;
@@ -153,29 +154,52 @@
 
     function renderStatus(data) {
       lastStatus = data;
-      document.getElementById('p1-time').textContent = fmt(data.player1_time);
-      document.getElementById('p2-time').textContent = fmt(data.player2_time);
-      document.getElementById('p1-break').textContent = data.break_tokens_p1 + '/3 tokens';
-      document.getElementById('p2-break').textContent = data.break_tokens_p2 + '/3 tokens';
-      document.getElementById('active-label').textContent = `Active: Player ${data.active_player}`;
+      lastStatusReceivedAt = Date.now();
+      updateUI();
+    }
+
+    function updateUI() {
+      if (!lastStatus) return;
+
+      let p1_time = lastStatus.player1_time;
+      let p2_time = lastStatus.player2_time;
+      let stopwatch_minutes = lastStatus.stopwatch_minutes;
+
+      if (!lastStatus.on_break && !lastStatus.alarm_active) {
+        const elapsedSeconds = (Date.now() - lastStatusReceivedAt) / 1000;
+        const elapsedMinutes = elapsedSeconds / 60;
+        if (lastStatus.active_player === 1) {
+          p1_time = Math.max(0, p1_time - elapsedMinutes);
+          if (lastStatus.stopwatch_mode) {
+            stopwatch_minutes += elapsedMinutes;
+          }
+        } else if (lastStatus.active_player === 2) {
+          p2_time = Math.max(0, p2_time - elapsedMinutes);
+        }
+      }
+
+      document.getElementById('p1-time').textContent = fmt(p1_time);
+      document.getElementById('p2-time').textContent = fmt(p2_time);
+document.getElementById('p1-break').textContent = `${lastStatus.break_tokens_p1}/2 tokens`;
+document.getElementById('p2-break').textContent = `${lastStatus.break_tokens_p2}/2 tokens`;
+      document.getElementById('active-label').textContent = `Active: Player ${lastStatus.active_player}`;
 
       // Calculate finishes-at time
-      const activeKey = data.active_player === 1 ? 'player1_time' : 'player2_time';
-      const remainingMin = data[activeKey];
-      if (remainingMin > 0) {
-        const finishDate = new Date(Date.now() + remainingMin * 60 * 1000);
+      const activeTime = lastStatus.active_player === 1 ? p1_time : p2_time;
+      if (activeTime > 0) {
+        const finishDate = new Date(Date.now() + activeTime * 60 * 1000);
         document.getElementById('finishes-at').textContent = `Finishes at ${fmtTime(finishDate)}`;
       } else {
         document.getElementById('finishes-at').textContent = 'Time depleted';
       }
 
-      document.getElementById('card-p1').classList.toggle('active', data.active_player === 1);
-      document.getElementById('card-p2').classList.toggle('active', data.active_player === 2);
+      document.getElementById('card-p1').classList.toggle('active', lastStatus.active_player === 1);
+      document.getElementById('card-p2').classList.toggle('active', lastStatus.active_player === 2);
 
       const badges = [];
-      if (data.on_break) badges.push(`<span class="badge break">On break: ${data.break_reason || '—'}</span>`);
-      if (data.stopwatch_mode) badges.push(`<span class="badge stopwatch">Stopwatch ${fmt(data.stopwatch_minutes)}</span>`);
-      if (data.alarm_active) badges.push('<span class="badge alarm">TIME UP</span>');
+      if (lastStatus.on_break) badges.push(`<span class="badge break">On break: ${lastStatus.break_reason || '—'}</span>`);
+      if (lastStatus.stopwatch_mode) badges.push(`<span class="badge stopwatch">Stopwatch ${fmt(stopwatch_minutes)}</span>`);
+      if (lastStatus.alarm_active) badges.push('<span class="badge alarm">TIME UP</span>');
       document.getElementById('badges').innerHTML = badges.join(' ');
 
       document.getElementById('connection').textContent = 'Online';
@@ -199,6 +223,7 @@
 
     fetchStatus();
     setInterval(fetchStatus, 3000);
+    setInterval(updateUI, 100);
   </script>
 </body>
 </html>

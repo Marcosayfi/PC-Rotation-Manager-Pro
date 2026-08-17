@@ -19,17 +19,84 @@ if sys.executable.endswith("pythonw.exe"):
     # Only suppress uvicorn logs, keep errors
     os.environ["PYTHONUNBUFFERED"] = "1"
 
+import faulthandler
+import threading
+import traceback
+
 import uvicorn
 from PyQt6.QtCore import QSharedMemory
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
+from backend.discord_bot import DiscordBotRunner
 from backend.server import create_app
 from backend.state_manager import StateManager
 from ui.main_window import MainWindow
 
 SERVER_NAME = "PCRotationManagerPro-Local"
 DATA_DIR = Path("C:\\PCRotationManagerPro")
+
+# ---------------------------------------------------------------------------
+# Crash capture: turn silent exits (hidden console) into a readable crash.log
+# so "app closes by itself" becomes a diagnosed traceback.
+# ---------------------------------------------------------------------------
+CRASH_LOG = DATA_DIR / "crash.log"
+
+
+def _open_crash_log():
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return open(CRASH_LOG, "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return None
+
+
+_crash_handle = _open_crash_log()
+
+if _crash_handle is not None:
+    try:
+        faulthandler.enable(_crash_handle)
+    except Exception:
+        _crash_handle = None
+
+
+def _write_crash(prefix: str, exc) -> None:
+    if _crash_handle is None:
+        return
+    try:
+        _crash_handle.write(f"===== {prefix}: {type(exc).__name__}: {exc} =====\n")
+        _crash_handle.flush()
+    except Exception:
+        pass
+
+
+def _report_exception(label: str, etype, value, tb) -> None:
+    if _crash_handle is not None:
+        try:
+            _crash_handle.write(f"===== {label} thread died =====\n")
+            traceback.print_exception(etype, value, tb, file=_crash_handle)
+            _crash_handle.flush()
+        except Exception:
+            pass
+
+
+def _main_thread_excepthook(etype, value, tb) -> None:
+    _report_exception("main", etype, value, tb)
+
+
+def _thread_excepthook(args) -> None:
+    _write_crash("thread", args.exc_value)
+    if _crash_handle is not None:
+        try:
+            _crash_handle.write(f"===== background thread died =====\n")
+            traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=_crash_handle)
+            _crash_handle.flush()
+        except Exception:
+            pass
+
+
+sys.excepthook = _main_thread_excepthook
+threading.excepthook = _thread_excepthook
 
 
 def run_server(state_manager: StateManager) -> None:
@@ -49,6 +116,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("PC Rotation Manager Pro")
     app.setOrganizationName("PCRotationManager")
+    # Critical: never let the app quit when its last window is hidden to the
+    # tray. Without this, losing/absent tray icon + hidden window = silent quit.
+    app.setQuitOnLastWindowClosed(False)
 
     # ---- Single-instance lock using QSharedMemory + QLocalServer ----
     shm = QSharedMemory("PCRotationManagerPro-Instance")
@@ -79,6 +149,19 @@ def main() -> int:
         name="api-server",
     )
     server_thread.start()
+
+    if state_manager.discord_bot_token:
+        bot = DiscordBotRunner(
+            state_manager=state_manager,
+            token=state_manager.discord_bot_token,
+            guild_id=state_manager.discord_guild_id,
+        )
+        bot_thread = threading.Thread(
+            target=bot.start,
+            daemon=True,
+            name="discord-bot",
+        )
+        bot_thread.start()
 
     window = MainWindow(state_manager)
 

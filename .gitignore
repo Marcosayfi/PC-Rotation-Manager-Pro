@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build / Gradle
+mobile port/PCRotationManagerPro/.gradle/
+mobile port/PCRotationManagerPro/app/build/
+mobile port/PCRotationManagerPro/build/
+mobile port/PCRotationManagerPro/local.properties
+mobile port/PCRotationManagerPro/.idea/
+*.apk
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime data (machine-specific, kept out of VCS)
+C:/PCRotationManagerPro/

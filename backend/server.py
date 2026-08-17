@@ -21,6 +21,15 @@ class UnfairBreakRequest(BaseModel):
     secret_code_2: str
 
 
+class PlayerBreakRequest(BaseModel):
+    reason: str
+    secret_code: str
+
+
+class PlayerBreakStopRequest(BaseModel):
+    secret_code: str
+
+
 class SecretCodeRequest(BaseModel):
     code: str
 
@@ -68,6 +77,28 @@ def create_app(state_manager) -> FastAPI:
     def start_unfair_break(body: UnfairBreakRequest, authorization: str | None = Header(default=None)):
         _check_admin(authorization)
         ok, msg = state_manager.start_unfair_break(body.reason, body.secret_code_1, body.secret_code_2)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        return {"ok": True, "message": msg, "status": state_manager.get_status()}
+
+    @app.post("/start_player_break")
+    def start_player_break(body: PlayerBreakRequest):
+        """Start a break from mobile using the active player's secret code."""
+        active = state_manager.state.active_player
+        if not state_manager.verify_secret_code(active, body.secret_code):
+            raise HTTPException(status_code=403, detail="Invalid secret code for the active player.")
+        ok, msg = state_manager.start_break(body.reason)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        return {"ok": True, "message": msg, "status": state_manager.get_status()}
+
+    @app.post("/stop_player_break")
+    def stop_player_break(body: PlayerBreakStopRequest):
+        """Stop a break from mobile using the active player's secret code."""
+        active = state_manager.state.active_player
+        if not state_manager.verify_secret_code(active, body.secret_code):
+            raise HTTPException(status_code=403, detail="Invalid secret code for the active player.")
+        ok, msg = state_manager.stop_break()
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
         return {"ok": True, "message": msg, "status": state_manager.get_status()}

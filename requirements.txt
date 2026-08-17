@@ -2,4 +2,5 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 PyQt6>=6.6.0
 pydantic>=2.0.0
-win10toast>=1.0.3
+win10toast>=0.9
+discord.py>=2.3.0

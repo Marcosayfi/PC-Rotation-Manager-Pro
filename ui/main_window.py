@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import os
+import time
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -26,14 +28,16 @@ from PyQt6.QtWidgets import (
 )
 
 from backend.state_manager import MAX_BREAK_TOKENS, StateManager
+from ui.about_dialog import AboutDialog
 from ui.admin_panel import AdminPanel
-from ui.alarm import AlarmPlayer
+from ui.alarm import AlarmPlayer, resolve_alarm_sound_path
 from ui.break_dialog import BreakDialog
-from ui.notifications import send_alarm_notification
+from ui.notifications import send_alarm_notification, send_time_alert_notification, send_windows_notification
+from ui.settings_dialog import SettingsDialog
 
 
 def format_time(minutes: float) -> str:
-    total_sec = max(0, int(minutes * 60))
+    total_sec = max(0, math.ceil(minutes * 60))
     h, rem = divmod(total_sec, 3600)
     m, s = divmod(rem, 60)
     if h:
@@ -64,13 +68,13 @@ class PlayerCard(QFrame):
         self.finish_time_label.setStyleSheet("color: #b0b0b0; font-size: 10px;")
         layout.addWidget(self.finish_time_label)
 
-        self.break_label = QLabel("Break tokens: 3/3")
+        self.break_label = QLabel("Break tokens: 2/2")
         self.break_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.break_label)
 
         self.break_bar = QProgressBar()
-        self.break_bar.setRange(0, 3)
-        self.break_bar.setFormat("%v / 3 tokens")
+        self.break_bar.setRange(0, 2)
+        self.break_bar.setFormat("%v / 2 tokens")
         layout.addWidget(self.break_bar)
 
         self._apply_style()
@@ -89,14 +93,21 @@ class PlayerCard(QFrame):
 
 
 class MainWindow(QMainWindow):
+    alarm_requested = pyqtSignal()
+    alarm_clear_requested = pyqtSignal()
+    state_changed = pyqtSignal()
+
     def __init__(self, state_manager: StateManager) -> None:
         super().__init__()
         self.state_manager = state_manager
         self.alarm = AlarmPlayer()
 
-        state_manager.on_alarm = self._on_alarm
-        state_manager.on_alarm_clear = self.alarm.stop
-        state_manager.on_state_change = self._refresh_ui
+        self.alarm_requested.connect(self._on_alarm)
+        self.alarm_clear_requested.connect(self.alarm.stop)
+        self.state_changed.connect(self._refresh_ui)
+        state_manager.on_alarm = self._request_alarm
+        state_manager.on_alarm_clear = self._request_alarm_clear
+        state_manager.on_state_change = self._request_state_change
 
         self.setWindowTitle("PC Rotation Manager Pro")
         self.setMinimumSize(720, 520)
@@ -107,13 +118,53 @@ class MainWindow(QMainWindow):
 
         self._ui_timer = QTimer(self)
         self._ui_timer.timeout.connect(self._refresh_ui)
-        self._ui_timer.start(500)
+        self._ui_timer.start(250)
 
         self._refresh_ui()
         if self.state_manager.get_status().get("alarm_active"):
-            self.alarm.start()
+            self.alarm.start(self._current_alarm_sound_path())
+
+    def _request_alarm(self) -> None:
+        self.alarm_requested.emit()
+
+    def _request_alarm_clear(self) -> None:
+        self.alarm_clear_requested.emit()
+
+    def _request_state_change(self) -> None:
+        self.state_changed.emit()
+
+    def _safe_slot(self, name: str, fn, *args, **kwargs):
+        """Run a Qt slot so an uncaught exception cannot abort the process.
+        In PyQt6 an exception escaping a slot kills the app with no traceback
+        (hidden console => looks like 'the app closed by itself')."""
+        try:
+            return fn(*args, **kwargs)
+        except BaseException as e:
+            import traceback
+            tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            self.state_manager.logger.log(f"INTERNAL ERROR in {name}: {e}")
+            try:
+                with open(r"C:\PCRotationManagerPro\crash.log", "a", encoding="utf-8") as f:
+                    f.write(f"===== {name} slot error =====\n{tb}\n")
+            except OSError:
+                pass
+            try:
+                QMessageBox.critical(
+                    self,
+                    "PC Rotation Manager Pro",
+                    f"An internal error occurred ({name}):\n\n{type(e).__name__}: {e}\n\n"
+                    "The app will keep running. Details saved to C:\\PCRotationManagerPro\\crash.log.",
+                )
+            except BaseException:
+                pass
+
+    def _current_alarm_sound_path(self):
+        settings = self.state_manager.user_settings
+        return resolve_alarm_sound_path(settings.alarm_sound_id, settings.custom_alarm_sounds)
 
     def _build_ui(self) -> None:
+        self._setup_menu_bar()
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
@@ -189,19 +240,80 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.log_label)
         root.addWidget(self.log_preview)
 
-        self.setStyleSheet("QMainWindow, QWidget { background: #121212; color: #eee; }")
+        self.setStyleSheet(
+            "QMainWindow, QWidget { background: #121212; color: #eee; }"
+            "QMenuBar { background-color: #121212; color: #eee; border: none; padding: 2px 6px; font-size: 13px; }"
+            "QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }"
+            "QMenuBar::item:selected { background-color: #2b2b2b; color: #ffffff; }"
+            "QMenuBar::item:pressed { background-color: #383838; }"
+            "QMenu { background-color: #2b2b2b; color: #ffffff; border: 1px solid #3d3d3d; border-radius: 8px; padding: 4px; font-size: 13px; }"
+            "QMenu::item { background: transparent; padding: 6px 20px; border-radius: 6px; margin: 1px 2px; }"
+            "QMenu::item:selected { background-color: #3d3d3d; color: #ffffff; }"
+            "QMenu::separator { height: 1px; background: #3d3d3d; margin: 4px 6px; }"
+        )
+
+    def _setup_menu_bar(self) -> None:
+        menubar = self.menuBar()
+        menubar.clear()
+
+        # File Menu
+        file_menu = menubar.addMenu("&File")
+
+        settings_action = QAction("Settings", self)
+        settings_action.setShortcut(QKeySequence("Ctrl+,"))
+        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(settings_action)
+
+        about_action = QAction("About", self)
+        about_action.setShortcut(QKeySequence("F1"))
+        about_action.triggered.connect(self._open_about)
+        file_menu.addAction(about_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Quit", self)
+        exit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        exit_action.triggered.connect(self._quit_app)
+        file_menu.addAction(exit_action)
+
+    def _open_settings(self) -> None:
+        dlg = SettingsDialog(self.state_manager, self)
+        dlg.exec()
+        self._refresh_ui()
+
+    def _open_about(self) -> None:
+        dlg = AboutDialog(self.state_manager, self)
+        dlg.exec()
 
     def _setup_shortcuts(self) -> None:
-        pass  # Admin panel is now accessible via button
+        pass  # Shortcuts configured via menu actions
 
     def _on_alarm(self) -> None:
+        self._safe_slot("_on_alarm", self._on_alarm_impl)
+
+    def _on_alarm_impl(self) -> None:
+        user_cfg = self.state_manager.user_settings
         active_player = self.state_manager.state.active_player
-        send_alarm_notification(active_player)
-        self.alarm.start()
+        reason = self.state_manager.state.alarm_reason
+        self.alarm.start(self._current_alarm_sound_path())
+
+        # If window is minimized or hidden in tray, unhide and bring to front
+        if self.isHidden() or self.isMinimized():
+            self.showNormal()
+            self.activateWindow()
+            self.raise_()
+
+        if "Remaining Alert" in reason:
+            if user_cfg.time_alert_toast_enabled:
+                send_windows_notification("⏰ PC Rotation Manager — Time Alert", f"{reason}! Click to dismiss.")
+        else:
+            if user_cfg.time_up_toast_enabled:
+                send_alarm_notification(active_player)
+
         self._refresh_ui()
 
     def _dismiss_alarm(self) -> None:
-        self.state_manager.dismiss_alarm()
+        self._safe_slot("_dismiss_alarm", self.state_manager.dismiss_alarm)
 
     def _open_admin(self) -> None:
         # Check if both secret codes are set
@@ -272,7 +384,18 @@ class MainWindow(QMainWindow):
                 if not ok:
                     QMessageBox.warning(self, "Break", msg)
 
+    def _display_minutes(self, stored_minutes: float, is_active: bool, on_break: bool) -> float:
+        """Interpolate remaining time between background ticks for smooth display."""
+        if not is_active or on_break:
+            return stored_minutes
+        sm = self.state_manager
+        elapsed_min = max(0.0, (time.time() - sm.state.last_tick) / 60.0)
+        return max(0.0, stored_minutes - elapsed_min)
+
     def _refresh_ui(self) -> None:
+        self._safe_slot("_refresh_ui", self._refresh_ui_impl)
+
+    def _refresh_ui_impl(self) -> None:
         sm = self.state_manager
         status = sm.get_status()
         ip = sm.advertised_ip
@@ -281,16 +404,22 @@ class MainWindow(QMainWindow):
             f"Mobile dashboard: http://{ip}:{port}/  |  API: /status  /logs"
         )
 
-        p1_time = status["player1_time"]
-        p2_time = status["player2_time"]
+        on_break = status["on_break"]
+        active = status["active_player"]
+        p1_time = self._display_minutes(
+            status["player1_time"], active == 1, on_break
+        )
+        p2_time = self._display_minutes(
+            status["player2_time"], active == 2, on_break
+        )
         self.p1_card.timer_label.setText(format_time(p1_time))
         self.p2_card.timer_label.setText(format_time(p2_time))
         
         # Update break tokens display
         p1_tokens = status["break_tokens_p1"]
         p2_tokens = status["break_tokens_p2"]
-        self.p1_card.break_label.setText(f"Break tokens: {p1_tokens}/3")
-        self.p2_card.break_label.setText(f"Break tokens: {p2_tokens}/3")
+        self.p1_card.break_label.setText(f"Break tokens: {p1_tokens}/2")
+        self.p2_card.break_label.setText(f"Break tokens: {p2_tokens}/2")
         self.p1_card.break_bar.setValue(p1_tokens)
         self.p2_card.break_bar.setValue(p2_tokens)
 
@@ -298,7 +427,6 @@ class MainWindow(QMainWindow):
         from datetime import datetime, timedelta
         import time as time_module
         
-        active = status["active_player"]
         now = time_module.time()
         session_elapsed = (now - sm.state.session_started_at) / 60.0  # in minutes
         
@@ -335,20 +463,30 @@ class MainWindow(QMainWindow):
 
         if status["stopwatch_mode"]:
             sw = status["stopwatch_minutes"]
-            self.stopwatch_label.setText(f"⏱ Stopwatch: {format_time(sw)} (P1 extra → P2 bonus)")
+            if active == status["active_player"] and not on_break:
+                sw += max(0.0, (time.time() - sm.state.last_tick) / 60.0)
+            self.stopwatch_label.setText(
+                f"⏱ Stopwatch: {format_time(sw)} (overtime → next player bonus)"
+            )
             self.stopwatch_label.setStyleSheet("color: #e67e22; font-weight: bold;")
         else:
             self.stopwatch_label.setText("Stopwatch: OFF")
             self.stopwatch_label.setStyleSheet("color: #888;")
 
         alarm = status.get("alarm_active", False)
+        alarm_reason = status.get("alarm_reason", "")
+        if alarm:
+            if alarm_reason:
+                self.alarm_banner.setText(f"⏰ {alarm_reason.upper()} — Dismiss alarm to continue")
+            else:
+                self.alarm_banner.setText("⏰ TIME UP — Dismiss alarm to continue")
         self.alarm_banner.setVisible(alarm)
         self.dismiss_btn.setVisible(alarm)
 
         low_style = "color: #e74c3c;"
         for card, time_val, depleted in [
-            (self.p1_card, status["player1_time"], status.get("player1_depleted")),
-            (self.p2_card, status["player2_time"], status.get("player2_depleted")),
+            (self.p1_card, p1_time, status.get("player1_depleted")),
+            (self.p2_card, p2_time, status.get("player2_depleted")),
         ]:
             if time_val <= 5 or depleted:
                 card.timer_label.setStyleSheet(low_style)
@@ -375,6 +513,15 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self) -> None:
         """Create the system tray icon with context menu."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            # No tray (e.g. Explorer restart, remote/kiosk session): keep the
+            # window usable instead of hiding an app the user can't restore.
+            self.tray_icon = None
+            self._tray_notified = True  # suppress balloon attempts
+            self._minimize_to_tray = False
+            return
+        self._minimize_to_tray = True
+
         ico = self._ico_path("ico")
         png = self._ico_path("png")
         ipath = ico if os.path.exists(ico) else png
@@ -388,8 +535,8 @@ class MainWindow(QMainWindow):
 
         self.tray_icon.setToolTip("PC Rotation Manager Pro")
 
-        # Build context menu
-        tray_menu = QMenu()
+        # Build context menu (parented to self so it isn't GC'd)
+        tray_menu = QMenu(self)
         open_action = QAction("Open", self)
         open_action.triggered.connect(self._show_window)
         tray_menu.addAction(open_action)
@@ -401,8 +548,9 @@ class MainWindow(QMainWindow):
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self._tray_activated)
         self.tray_icon.show()
+        self._tray_notified = False
 
-    def _tray_activated(self, reason: int) -> None:
+    def _tray_activated(self, reason) -> None:
         """Left-click on tray icon shows the window."""
         if reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
@@ -418,29 +566,49 @@ class MainWindow(QMainWindow):
     def _quit_app(self) -> None:
         self.alarm.stop()
         self.state_manager.stop()
-        self.tray_icon.hide()
+        try:
+            if self.tray_icon is not None:
+                self.tray_icon.hide()
+        except RuntimeError:
+            pass  # native tray already destroyed (e.g. Explorer restart)
         QApplication.quit()
+
+    def _tray_show_message(self, title: str, msg: str) -> None:
+        """Safely show a tray balloon; no-op if tray is gone."""
+        try:
+            if self.tray_icon is not None:
+                self.tray_icon.showMessage(
+                    title, msg,
+                    QSystemTrayIcon.MessageIcon.Information, 2000,
+                )
+        except RuntimeError:
+            pass  # native tray already destroyed
 
     def changeEvent(self, event) -> None:
         """Intercept minimize to hide to tray instead of taskbar."""
         if event.type() == event.Type.WindowStateChange:
-            if self.isMinimized():
+            if self.isMinimized() and self._minimize_to_tray:
                 self.hide()
-                self.tray_icon.showMessage(
-                    "PC Rotation Manager",
-                    "Still running — double-click tray icon to reopen.",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    2000,
-                )
+                if not self._tray_notified:
+                    self._tray_notified = True
+                    self._tray_show_message(
+                        "PC Rotation Manager",
+                        "Still running — double-click tray icon to reopen. This notification will only show once.",
+                    )
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:
-        """Close button hides to tray instead of quitting."""
+        """Close button hides to tray instead of quitting.
+        When the tray is unavailable the window simply minimizes to the
+        taskbar so the app can always be restored."""
         event.ignore()
-        self.hide()
-        self.tray_icon.showMessage(
-            "PC Rotation Manager",
-            "Minimized to tray — right-click icon and select Quit to exit.",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000,
-        )
+        if self._minimize_to_tray:
+            self.hide()
+            if not self._tray_notified:
+                self._tray_notified = True
+                self._tray_show_message(
+                    "PC Rotation Manager",
+                    "Minimized to tray — right-click icon and select Quit to exit. This notification will only show once.",
+                )
+        else:
+            self.showMinimized()
